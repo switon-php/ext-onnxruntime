@@ -9,8 +9,23 @@
 #include "php_onnxruntime.h"
 
 #include <string.h>
+#ifdef PHP_WIN32
+#include <windows.h>
+#ifndef strcasecmp
+#define strcasecmp _stricmp
+#endif
+#define onnx_lock_init(lock) InitializeSRWLock(lock)
+#define onnx_lock_destroy(lock) ((void) (lock))
+#define onnx_lock_lock(lock) AcquireSRWLockExclusive(lock)
+#define onnx_lock_unlock(lock) ReleaseSRWLockExclusive(lock)
+#else
 #include <strings.h>
 #include <pthread.h>
+#define onnx_lock_init(lock) pthread_mutex_init(lock, NULL)
+#define onnx_lock_destroy(lock) pthread_mutex_destroy(lock)
+#define onnx_lock_lock(lock) pthread_mutex_lock(lock)
+#define onnx_lock_unlock(lock) pthread_mutex_unlock(lock)
+#endif
 
 static zend_class_entry *onnx_session_ce = NULL;
 static zend_class_entry *onnx_value_info_ce = NULL;
@@ -33,7 +48,11 @@ typedef struct _onnx_session {
 	ones_buf *ones;
 	size_t ones_count;
 	size_t ones_size;
+#ifdef PHP_WIN32
+	SRWLOCK ones_lock;
+#else
 	pthread_mutex_t ones_lock;
+#endif
 	zend_object std;
 } onnx_session;
 
@@ -1194,12 +1213,12 @@ static void *ones_buffer(onnx_session *session, ONNXTensorElementDataType dtype,
 	void *data;
 	ones_buf *grown;
 
-	pthread_mutex_lock(&session->ones_lock);
+	onnx_lock_lock(&session->ones_lock);
 	for (i = 0; i < session->ones_count; i++) {
 		if (session->ones[i].dtype == dtype && session->ones[i].rank == rank && session->ones[i].nbytes == nbytes
 			&& memcmp(session->ones[i].dims, shape, sizeof(int64_t) * rank) == 0) {
 			data = session->ones[i].data;
-			pthread_mutex_unlock(&session->ones_lock);
+			onnx_lock_unlock(&session->ones_lock);
 			return data;
 		}
 	}
@@ -1207,7 +1226,7 @@ static void *ones_buffer(onnx_session *session, ONNXTensorElementDataType dtype,
 	for (index = 0; index < nbytes / onnx_dtype_size(dtype); index++) {
 		if (!store_flag(data, index, dtype, 1)) {
 			efree(data);
-			pthread_mutex_unlock(&session->ones_lock);
+			onnx_lock_unlock(&session->ones_lock);
 			return NULL;
 		}
 	}
@@ -1225,7 +1244,7 @@ static void *ones_buffer(onnx_session *session, ONNXTensorElementDataType dtype,
 	session->ones[session->ones_count].data = data;
 	session->ones[session->ones_count].nbytes = nbytes;
 	session->ones_count++;
-	pthread_mutex_unlock(&session->ones_lock);
+	onnx_lock_unlock(&session->ones_lock);
 	return data;
 }
 
@@ -1580,7 +1599,7 @@ static zend_object *session_new(zend_class_entry *ce)
 	session->ones = NULL;
 	session->ones_count = 0;
 	session->ones_size = 0;
-	pthread_mutex_init(&session->ones_lock, NULL);
+	onnx_lock_init(&session->ones_lock);
 	ZVAL_UNDEF(&session->providers);
 	return &session->std;
 }
@@ -1622,7 +1641,7 @@ static void session_free(zend_object *object)
 	onnx_session *session = session_from_obj(object);
 
 	release_session(session);
-	pthread_mutex_destroy(&session->ones_lock);
+	onnx_lock_destroy(&session->ones_lock);
 	if (Z_TYPE(session->providers) != IS_UNDEF) {
 		zval_ptr_dtor(&session->providers);
 	}
