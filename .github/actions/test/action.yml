@@ -120,8 +120,15 @@ runs:
         set -euo pipefail
         before=$(mktemp)
         after=$(mktemp)
+        setup=$(mktemp --suffix=.bat)
         cmd //c set > "$before"
-        cmd //c "call \"$VSDEV\" -arch=x64 -host_arch=x64 -vcvars_ver=$TOOLSET >nul && set" > "$after"
+        cat > "$setup" <<EOF
+@echo off
+call "$VSDEV" -arch=x64 -host_arch=x64 -vcvars_ver=$TOOLSET >nul
+if errorlevel 1 exit /b 1
+set
+EOF
+        cmd //c "$(cygpath -w "$setup")" > "$after"
         BEFORE="$before" AFTER="$after" python -c '
         import os
         def load(path):
