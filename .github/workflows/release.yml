@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.os }} / PHP ${{ matrix.php }} ${{ matrix.ts }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ["8.2", "8.3", "8.4", "8.5"]
+        ts: [nts, zts]
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/test
+        with:
+          php: ${{ matrix.php }}
+          ts: ${{ matrix.ts }}
+          upload: "true"
+
+  publish:
+    name: Publish GitHub release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum onnxruntime-*.tar.gz php_onnxruntime-*.zip | tee SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          append_body: true
+          body: |
+            `pie install switon/onnxruntime` uses the `php_onnxruntime-*.zip` assets. A manual download is `onnxruntime-<version>-php<php>-<nts|zts>-<linux|macos|windows>-<x64|arm64>.tar.gz`. Unpack it. The archive contains `onnxruntime.so` and `libonnxruntime.so.1` on Linux, `onnxruntime.so` and `libonnxruntime.1.dylib` on macOS, or `php_onnxruntime.dll` and `onnxruntime.dll` on Windows. Keep the two files in the same directory. `php --ri onnxruntime` reports the version.
+
+            ```ini
+            extension=/path/onnxruntime.so
+            ```
+
+            On Windows the line is `extension=C:/path/php_onnxruntime.dll`. `extension=onnxruntime` loads `onnxruntime.so` on Linux and macOS, and `php_onnxruntime.dll` on Windows. Linux builds are Ubuntu 24.04 glibc. Windows builds are x64. The extension links ONNX Runtime 1.31.1.
+          files: |
+            dist/onnxruntime-*.tar.gz
+            dist/php_onnxruntime-*.zip
+            dist/SHA256SUMS

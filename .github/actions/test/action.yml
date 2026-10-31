@@ -1,0 +1,179 @@
+name: Build and test
+description: Install one PHP build, compile the extension against ONNX Runtime, and run make test.
+inputs:
+  php:
+    description: PHP minor version, such as 8.4
+    required: true
+  ts:
+    description: nts or zts
+    required: true
+  upload:
+    description: Upload the release library when true
+    required: false
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Install readelf
+      if: runner.os == 'Linux'
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install -y binutils
+
+    - name: Install Windows build tools
+      if: runner.os == 'Windows'
+      shell: bash
+      run: |
+        set -euo pipefail
+        choco install llvm make -y --no-progress
+        echo "LIBCLANG_PATH=C:\\Program Files\\LLVM\\bin" >> "$GITHUB_ENV"
+
+    - name: Install PHP ${{ inputs.php }} ${{ inputs.ts }}
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ inputs.php }}
+        coverage: none
+        extensions: none
+      env:
+        phpts: ${{ inputs.ts }}
+
+    - name: Download ONNX Runtime 1.31.1
+      shell: bash
+      run: |
+        set -euo pipefail
+        case "$(uname -s)" in
+          Linux)
+            case "$(uname -m)" in
+              x86_64) asset=onnxruntime-linux-x64-1.31.1.tgz ;;
+              aarch64) asset=onnxruntime-linux-aarch64-1.31.1.tgz ;;
+              *) echo "unsupported CPU $(uname -m)" >&2; exit 1 ;;
+            esac
+            ;;
+          Darwin)
+            case "$(uname -m)" in
+              arm64) asset=onnxruntime-osx-arm64-1.31.1.tgz ;;
+              x86_64) asset=onnxruntime-osx-x86_64-1.31.1.tgz ;;
+              *) echo "unsupported CPU $(uname -m)" >&2; exit 1 ;;
+            esac
+            ;;
+          MINGW*|MSYS*|CYGWIN*)
+            asset=onnxruntime-win-x64-1.31.1.zip
+            ;;
+          *)
+            echo "unsupported OS $(uname -s)" >&2
+            exit 1
+            ;;
+        esac
+        curl -fsSL -o ort.pkg "https://github.com/microsoft/onnxruntime/releases/download/v1.31.1/${asset}"
+        rm -rf deps
+        mkdir -p deps
+        case "$asset" in
+          *.zip) unzip -q ort.pkg -d deps ;;
+          *) tar -xzf ort.pkg -C deps ;;
+        esac
+        prefix=$(find deps -mindepth 1 -maxdepth 1 -type d -name 'onnxruntime-*' | head -1)
+        test -n "$prefix"
+        echo "ORT=$PWD/$prefix" >> "$GITHUB_ENV"
+
+    - name: Test
+      shell: bash
+      env:
+        EXPECTED_PHP: ${{ inputs.php }}
+        EXPECTED_TS: ${{ inputs.ts }}
+        UPLOAD: ${{ inputs.upload }}
+      run: |
+        set -euo pipefail
+        ver=$(php -r 'echo PHP_MAJOR_VERSION, ".", PHP_MINOR_VERSION;')
+        ts=$(php -r 'echo PHP_ZTS ? "zts" : "nts";')
+        echo "PHP $ver $ts"
+        php -v
+        if [ "$ver" != "$EXPECTED_PHP" ] || [ "$ts" != "$EXPECTED_TS" ]; then
+          echo "expected PHP ${EXPECTED_PHP} ${EXPECTED_TS}, got ${ver} ${ts}" >&2
+          exit 1
+        fi
+        case "$(uname -s)" in
+          MINGW*|MSYS*|CYGWIN*) export PATH="$ORT/lib:$PATH" ;;
+        esac
+        set +e
+        make test
+        test_status=$?
+        set -e
+        echo "make test exit ${test_status}"
+        if [[ "$test_status" -ne 0 ]]; then
+          exit "$test_status"
+        fi
+        lib=$(tr -d '[:space:]' < target/ext-library)
+        bash "$GITHUB_ACTION_PATH/check-linkage.sh" "$lib"
+        if [ "$UPLOAD" != "true" ]; then
+          exit 0
+        fi
+        case "$(uname -m)" in
+          x86_64|amd64|AMD64) arch=x64 ;;
+          aarch64|arm64) arch=arm64 ;;
+          *)
+            echo "unsupported CPU $(uname -m)" >&2
+            exit 1
+            ;;
+        esac
+        case "$(uname -s)" in
+          Linux) platform=linux ;;
+          Darwin) platform=macos ;;
+          MINGW*|MSYS*|CYGWIN*) platform=windows ;;
+        esac
+        name=$(basename "$lib")
+        ort=$(tr -d '[:space:]' < target/ort-library)
+        ort_name=$(basename "$ort")
+        rm -rf dist
+        mkdir -p dist/pkg
+        cp "$lib" "dist/pkg/$name"
+        cp -L "$ort" "dist/pkg/$ort_name"
+        if [ ! -s target/ext-version ]; then
+          echo "target/ext-version is missing" >&2
+          exit 1
+        fi
+        pkg_ver=$(tr -d '[:space:]' < target/ext-version)
+        case "$pkg_ver" in
+          v*) pie_ver=$pkg_ver ;;
+          [0-9]*) pie_ver=v$pkg_ver ;;
+          *) pie_ver=$pkg_ver ;;
+        esac
+        tar -C dist/pkg -czf "dist/onnxruntime-${pkg_ver}-php${ver}-${ts}-${platform}-${arch}.tar.gz" "$name" "$ort_name"
+        case "$arch" in
+          x64) pie_arch=x86_64 ;;
+          arm64) pie_arch=arm64 ;;
+        esac
+        case "$platform" in
+          linux)
+            pie_zip="dist/php_onnxruntime-${pie_ver}_php${ver}-${pie_arch}-linux-glibc-${ts}.zip"
+            pie_member=onnxruntime.so
+            ;;
+          macos)
+            pie_zip="dist/php_onnxruntime-${pie_ver}_php${ver}-${pie_arch}-darwin-bsdlibc-${ts}.zip"
+            pie_member=onnxruntime.so
+            ;;
+          windows)
+            case "$ts" in
+              zts) win_ts=ts ;;
+              *) win_ts=nts ;;
+            esac
+            case "$ver" in
+              8.2|8.3) compiler=vs16 ;;
+              *) compiler=vs17 ;;
+            esac
+            pie_member="php_onnxruntime-${pie_ver}-${ver}-${win_ts}-${compiler}-x86_64.dll"
+            pie_zip="dist/${pie_member%.dll}.zip"
+            ;;
+        esac
+        python3 -c 'import os, sys, zipfile
+        z = zipfile.ZipFile(sys.argv[1], "w", compression=zipfile.ZIP_DEFLATED)
+        z.write(sys.argv[2], sys.argv[3])
+        z.write(sys.argv[4], os.path.basename(sys.argv[4]))
+        ' "$pie_zip" "dist/pkg/$name" "$pie_member" "dist/pkg/$ort_name"
+        rm -rf dist/pkg
+
+    - name: Upload library
+      if: inputs.upload == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: onnxruntime-${{ inputs.php }}-${{ inputs.ts }}-${{ runner.os }}-${{ runner.arch }}
+        path: dist/*
+        if-no-files-found: error

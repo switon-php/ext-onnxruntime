@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / PHP ${{ matrix.php }} ${{ matrix.ts }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Smoke on main and pull requests. The full PHP matrix is release.yml.
+          - { os: ubuntu-24.04, php: "8.5", ts: nts }
+          - { os: ubuntu-24.04-arm, php: "8.5", ts: nts }
+          - { os: macos-15, php: "8.5", ts: nts }
+          - { os: windows-latest, php: "8.5", ts: nts }
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/test
+        with:
+          php: ${{ matrix.php }}
+          ts: ${{ matrix.ts }}
