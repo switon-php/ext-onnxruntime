@@ -1,0 +1,10 @@
+ARG_WITH("onnxruntime", "ONNX Runtime support", "no");
+
+if (PHP_ONNXRUNTIME != "no") {
+	if (CHECK_LIB("onnxruntime.lib", "onnxruntime", PHP_ONNXRUNTIME + "\\lib") &&
+			CHECK_HEADER_ADD_INCLUDE("onnxruntime_c_api.h", "CFLAGS_ONNXRUNTIME", PHP_ONNXRUNTIME + "\\include")) {
+		EXTENSION("onnxruntime", "onnxruntime.c value.c session.c", PHP_ONNXRUNTIME_SHARED, "/DZEND_ENABLE_STATIC_TSRMLS_CACHE=1");
+	} else {
+		WARNING("onnxruntime not enabled; library or header was not found");
+	}
+}
