@@ -1,0 +1,25 @@
+{
+  "name": "switon/onnxruntime",
+  "description": "PHP extension for ONNX Runtime inference. IDE stubs are in stubs/.",
+  "type": "php-ext",
+  "license": "MIT",
+  "keywords": ["php-extension", "onnx", "onnxruntime", "inference"],
+  "authors": [
+    {
+      "name": "switon",
+      "email": "admin@switon.dev"
+    }
+  ],
+  "homepage": "https://github.com/switon-php/ext-onnxruntime",
+  "require": {
+    "php": ">=8.2 <8.6"
+  },
+  "php-ext": {
+    "extension-name": "onnxruntime",
+    "build-path": "pie",
+    "support-nts": true,
+    "support-zts": true,
+    "os-families": ["linux", "darwin", "windows"],
+    "download-url-method": ["pre-packaged-binary", "composer-default"]
+  }
+}

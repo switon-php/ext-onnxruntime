@@ -1,0 +1,44 @@
+# ONNX Runtime prebuilt, unpacked by the build or by CI.
+deps/
+
+# phpize and configure output. The only files kept in pie/ are config.m4,
+# config.w32, the C sources, and php_onnxruntime.h; everything else is generated.
+pie/conf*
+!pie/config.m4
+!pie/config.w32
+pie/*.lo
+pie/*.la
+pie/*.loT
+pie/*.dep
+pie/*~
+pie/.phpize*
+pie/aclocal.m4
+pie/autom4te.cache/
+pie/build/
+pie/modules/
+pie/.libs/
+pie/.deps/
+pie/libtool
+pie/Makefile
+pie/Makefile.fragments
+pie/Makefile.global
+pie/Makefile.objects
+pie/run-tests.php
+pie/tmp-php.ini
+pie/version.h
+
+# Build and packaging output.
+/target/
+/dist/
+
+# Written by tests/make_models.php, which make test and make examples depend on.
+tests/models/
+examples/models/
+
+# Written by bench/gen_models.py.
+bench/.venv/
+bench/models/
+
+__pycache__/
+.idea/
+.workbuddy-ai/
