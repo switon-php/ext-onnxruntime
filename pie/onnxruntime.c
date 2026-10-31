@@ -555,6 +555,12 @@ static void declare_value_constant(zend_class_entry *ce, const char *name, const
 	zend_declare_class_constant_string(ce, name, strlen(name), value);
 }
 
+PHP_RINIT_FUNCTION(onnxruntime)
+{
+	ZEND_TSRMLS_CACHE_UPDATE();
+	return SUCCESS;
+}
+
 PHP_MINIT_FUNCTION(onnxruntime)
 {
 	const OrtApiBase *base;
@@ -563,6 +569,7 @@ PHP_MINIT_FUNCTION(onnxruntime)
 	const char *log_cases[] = {"Verbose", "Info", "Warning", "Error", "Fatal"};
 	const char *log_values[] = {"verbose", "info", "warning", "error", "fatal"};
 
+	ZEND_TSRMLS_CACHE_UPDATE();
 	base = OrtGetApiBase();
 	ort_api = base->GetApi(ORT_API_VERSION);
 	if (ort_api == NULL) {
@@ -639,12 +646,16 @@ zend_module_entry onnxruntime_module_entry = {
 	NULL,
 	PHP_MINIT(onnxruntime),
 	PHP_MSHUTDOWN(onnxruntime),
-	NULL,
+	PHP_RINIT(onnxruntime),
 	NULL,
 	PHP_MINFO(onnxruntime),
 	PHP_ONNXRUNTIME_VERSION,
 	STANDARD_MODULE_PROPERTIES
 };
+
+#ifdef ZTS
+ZEND_TSRMLS_CACHE_DEFINE()
+#endif
 
 #ifdef COMPILE_DL_ONNXRUNTIME
 ZEND_GET_MODULE(onnxruntime)

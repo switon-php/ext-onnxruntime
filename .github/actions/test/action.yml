@@ -96,9 +96,13 @@ runs:
       run: |
         set -euo pipefail
         shopt -s nullglob
-        matches=(/c/Program\ Files/Microsoft\ Visual\ Studio/*/Enterprise/VC/Tools/MSVC/14.44.*)
+        case "${{ inputs.php }}" in
+          8.2|8.3) prefix=14.29 ;;
+          *) prefix=14.44 ;;
+        esac
+        matches=(/c/Program\ Files/Microsoft\ Visual\ Studio/*/Enterprise/VC/Tools/MSVC/${prefix}.*)
         if [ ${#matches[@]} -eq 0 ]; then
-          echo "PHP's Windows build is linked with MSVC 14.44, and that toolset is not installed" >&2
+          echo "PHP ${{ inputs.php }} is linked with MSVC ${prefix}, and that toolset is not installed" >&2
           exit 1
         fi
         match=$(printf '%s\n' "${matches[@]}" | sort -V | tail -n 1)
