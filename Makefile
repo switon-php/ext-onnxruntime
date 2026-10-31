@@ -53,6 +53,13 @@ test: build models
 	test -n "$$ext" && test -f "$$ext"; \
 	printf '%s\n' "$$ext" > target/ext-library; \
 	$(PHP) -r '$$p = $$argv[1]; foreach (["lib/libonnxruntime.1.dylib", "lib/libonnxruntime.so.1", "lib/onnxruntime.dll"] as $$name) { $$path = $$p . "/" . $$name; if (file_exists($$path)) { echo $$path, "\n"; exit(0); } } fwrite(STDERR, "ONNX Runtime shared library not found under $$p/lib\n"); exit(1);' -- "$(ORT)" > target/ort-library; \
+	case "$$(uname -s)" in \
+		MINGW*|MSYS*|CYGWIN*) \
+			ortfile=$$(tr -d '[:space:]' < target/ort-library); \
+			phpbin=$$(command -v $(PHP)); \
+			cp -f "$$(dirname "$$ortfile")"/*.dll "$$(dirname "$$phpbin")/"; \
+			;; \
+	esac; \
 	$(PHP) -d extension="$$ext" tests/api.php && \
 	$(PHP) -d extension="$$ext" tests/gaps.php && \
 	$(PHP) -d extension="$$ext" tests/surface.php && \
