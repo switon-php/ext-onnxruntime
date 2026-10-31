@@ -1,12 +1,19 @@
 PHP ?= php
+PHPIZE ?= phpize
 PHP_CONFIG ?= php-config
+PHP_PREFIX ?=
 ORT_VERSION ?= 1.31.1
 PIE := $(CURDIR)/pie
-EXT := $(PIE)/modules/onnxruntime.so
 
 UNAME_S := $(shell uname -s)
+WINDOWS := $(findstring MINGW,$(UNAME_S))$(findstring MSYS,$(UNAME_S))$(findstring CYGWIN,$(UNAME_S))
 ifeq ($(UNAME_S),Darwin)
 ORT ?= $(CURDIR)/deps/onnxruntime-osx-arm64-$(ORT_VERSION)
+endif
+ifneq ($(WINDOWS),)
+EXT := $(PIE)/modules/php_onnxruntime.dll
+else
+EXT := $(PIE)/modules/onnxruntime.so
 endif
 
 .PHONY: build test models examples bench clean
@@ -15,10 +22,21 @@ build:
 	mkdir -p target
 	$(PHP) tools/ext-version.php > target/ext-version
 	$(PHP) -r '$$v = trim(file_get_contents("target/ext-version")); file_put_contents("pie/version.h", "#define PHP_ONNXRUNTIME_VERSION \"" . $$v . "\"\n");'
-	cd $(PIE) && phpize && \
+ifeq ($(WINDOWS),)
+	cd $(PIE) && $(PHPIZE) && \
 		args="--with-onnxruntime=$(ORT)"; \
 		if command -v '$(PHP_CONFIG)' >/dev/null 2>&1; then args="--with-php-config=$(PHP_CONFIG) $$args"; fi; \
 		./configure $$args && $(MAKE) -j4
+else
+	cl_bin=$$(command -v cl || command -v cl.exe); \
+	test -n "$$cl_bin"; \
+	PATH="$$(dirname "$$cl_bin"):$$PATH"; \
+	cd $(PIE) && cmd //c "phpize && configure --with-onnxruntime=$(ORT) --with-prefix=$(PHP_PREFIX) && nmake"
+	mkdir -p $(PIE)/modules
+	dll=$$(find $(PIE) -name php_onnxruntime.dll -type f ! -path '*/modules/*' | head -n 1); \
+	test -n "$$dll"; \
+	cp "$$dll" $(EXT)
+endif
 
 # The script overwrites what it writes but cannot remove a model a past version
 # wrote, so an old tree keeps a file that no longer loads. Clear both first.

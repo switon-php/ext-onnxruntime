@@ -28,11 +28,96 @@ runs:
         echo "LIBCLANG_PATH=C:\\Program Files\\LLVM\\bin" >> "$GITHUB_ENV"
 
     - name: Install PHP ${{ inputs.php }} ${{ inputs.ts }}
+      id: php-sdk
+      if: runner.os == 'Windows'
+      shell: bash
+      run: |
+        set -euo pipefail
+        case "${{ inputs.php }}" in
+          8.2|8.3) vs=vs16 ;;
+          *) vs=vs17 ;;
+        esac
+        case "${{ inputs.ts }}" in
+          zts) tspart=Win32 ;;
+          *) tspart=nts-Win32 ;;
+        esac
+        base="https://downloads.php.net/~windows/releases"
+        revision=$(curl -fsSL "$base/" | python -c '
+        import re, sys
+        minor, tspart, vs = sys.argv[1:]
+        html = sys.stdin.read()
+        found = set(re.findall(
+            r"php-devel-pack-(" + re.escape(minor) + r"\.\d+(?:-\d+)?)-"
+            + re.escape(tspart) + "-" + re.escape(vs) + r"-x64\.zip",
+            html,
+        ))
+        if not found:
+            sys.exit("no Windows devel pack for %s %s %s" % (minor, tspart, vs))
+        def key(rev):
+            main, _, pack = rev.partition("-")
+            parts = [int(part) for part in main.split(".")]
+            parts.append(int(pack) if pack else 0)
+            return parts
+        print(max(found, key=key))
+        ' "${{ inputs.php }}" "$tspart" "$vs")
+        echo "PHP revision $revision"
+        root="$RUNNER_TEMP/php-build"
+        rm -rf "$root"
+        mkdir -p "$root"
+        curl -fsSL -o "$root/php.zip" "$base/php-${revision}-${tspart}-${vs}-x64.zip"
+        curl -fsSL -o "$root/devel.zip" "$base/php-devel-pack-${revision}-${tspart}-${vs}-x64.zip"
+        curl -fsSL -o "$root/sdk.zip" "https://github.com/php/php-sdk-binary-tools/releases/download/php-sdk-2.3.0/php-sdk-binary-tools-php-sdk-2.3.0.zip"
+        unzip -q "$root/php.zip" -d "$root/php-bin"
+        unzip -q "$root/devel.zip" -d "$root/devel-src"
+        unzip -q "$root/sdk.zip" -d "$root/sdk-src"
+        if [ ! -f "$root/php-bin/php.exe" ]; then
+          bin=$(find "$root/php-bin" -name php.exe -type f | head -n 1)
+          test -n "$bin"
+          prefix=$(dirname "$bin")
+        else
+          prefix=$root/php-bin
+        fi
+        dev=$(find "$root/devel-src" -mindepth 1 -maxdepth 1 -type d -name 'php-*-devel-*' | head -n 1)
+        test -n "$dev"
+        test -f "$dev/phpize.bat"
+        msys=$(find "$root/sdk-src" -type d -path '*/msys2/usr/bin' | head -n 1)
+        test -n "$msys"
+        test -x "$msys/bison.exe"
+        test -x "$msys/re2c.exe"
+        cygpath -w "$prefix" >> "$GITHUB_PATH"
+        cygpath -w "$dev" >> "$GITHUB_PATH"
+        cygpath -w "$msys" >> "$GITHUB_PATH"
+        echo "prefix=$(cygpath -w "$prefix")" >> "$GITHUB_OUTPUT"
+
+    - name: Select the MSVC toolset
+      id: msvc
+      if: runner.os == 'Windows'
+      shell: bash
+      run: |
+        set -euo pipefail
+        shopt -s nullglob
+        matches=(/c/Program\ Files/Microsoft\ Visual\ Studio/*/Enterprise/VC/Tools/MSVC/14.44.*)
+        if [ ${#matches[@]} -eq 0 ]; then
+          echo "PHP's Windows build is linked with MSVC 14.44, and that toolset is not installed" >&2
+          exit 1
+        fi
+        toolset=$(printf '%s\n' "${matches[@]}" | sed 's|.*/||' | sort -V | tail -n 1)
+        echo "MSVC toolset $toolset"
+        echo "toolset=$toolset" >> "$GITHUB_OUTPUT"
+
+    - name: Enable the MSVC developer prompt
+      if: runner.os == 'Windows'
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+        toolset: ${{ steps.msvc.outputs.toolset }}
+
+    - name: Install PHP ${{ inputs.php }} ${{ inputs.ts }}
+      if: runner.os != 'Windows'
       uses: shivammathur/setup-php@v2
       with:
         php-version: ${{ inputs.php }}
         coverage: none
-        extensions: none
       env:
         phpts: ${{ inputs.ts }}
 
@@ -80,6 +165,7 @@ runs:
         EXPECTED_PHP: ${{ inputs.php }}
         EXPECTED_TS: ${{ inputs.ts }}
         UPLOAD: ${{ inputs.upload }}
+        PHP_PREFIX: ${{ steps.php-sdk.outputs.prefix }}
       run: |
         set -euo pipefail
         ver=$(php -r 'echo PHP_MAJOR_VERSION, ".", PHP_MINOR_VERSION;')
