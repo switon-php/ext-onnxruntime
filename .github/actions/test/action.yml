@@ -101,16 +101,49 @@ runs:
           echo "PHP's Windows build is linked with MSVC 14.44, and that toolset is not installed" >&2
           exit 1
         fi
-        toolset=$(printf '%s\n' "${matches[@]}" | sed 's|.*/||' | sort -V | tail -n 1)
+        match=$(printf '%s\n' "${matches[@]}" | sort -V | tail -n 1)
+        toolset=$(basename "$match")
+        edition=${match%/VC/Tools/MSVC/*}
+        vsdev="$edition/Common7/Tools/VsDevCmd.bat"
+        test -f "$vsdev"
         echo "MSVC toolset $toolset"
         echo "toolset=$toolset" >> "$GITHUB_OUTPUT"
+        echo "vsdev=$(cygpath -w "$vsdev")" >> "$GITHUB_OUTPUT"
 
     - name: Enable the MSVC developer prompt
       if: runner.os == 'Windows'
-      uses: ilammy/msvc-dev-cmd@v1
-      with:
-        arch: x64
-        toolset: ${{ steps.msvc.outputs.toolset }}
+      shell: bash
+      env:
+        TOOLSET: ${{ steps.msvc.outputs.toolset }}
+        VSDEV: ${{ steps.msvc.outputs.vsdev }}
+      run: |
+        set -euo pipefail
+        before=$(mktemp)
+        after=$(mktemp)
+        cmd //c set > "$before"
+        cmd //c "call \"$VSDEV\" -arch=x64 -host_arch=x64 -vcvars_ver=$TOOLSET >nul && set" > "$after"
+        BEFORE="$before" AFTER="$after" python -c '
+        import os
+        def load(path):
+            data = open(path, "rb").read()
+            text = data.decode("utf-16") if data.startswith(b"\xff\xfe") else data.decode("mbcs", "replace")
+            env = {}
+            for line in text.splitlines():
+                if not line or line.startswith("=") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                if key and "\n" not in value:
+                    env[key] = value
+            return env
+        before = load(os.environ["BEFORE"])
+        after = load(os.environ["AFTER"])
+        changed = [key for key in after if before.get(key) != after[key]]
+        if "Path" not in changed and "PATH" not in changed:
+            raise SystemExit("VsDevCmd did not set PATH")
+        with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8", newline="\n") as out:
+            for key in changed:
+                out.write(f"{key}={after[key]}\n")
+        '
 
     - name: Install PHP ${{ inputs.php }} ${{ inputs.ts }}
       if: runner.os != 'Windows'
