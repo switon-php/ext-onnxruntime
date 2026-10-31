@@ -426,7 +426,29 @@ static int open_session(onnx_session *session, const char *path, const void *byt
 		return 0;
 	}
 	if (path != NULL) {
+#ifdef PHP_WIN32
+		/* CreateSession takes ORTCHAR_T, which is wchar_t on Windows. */
+		wchar_t *wide;
+		int chars = MultiByteToWideChar(CP_UTF8, 0, path, -1, NULL, 0);
+		if (chars <= 0) {
+			ort_api->ReleaseSessionOptions(options);
+			zval_ptr_dtor(&providers);
+			onnx_throw("failed to encode the model path");
+			return 0;
+		}
+		wide = emalloc((size_t) chars * sizeof(wchar_t));
+		if (MultiByteToWideChar(CP_UTF8, 0, path, -1, wide, chars) == 0) {
+			efree(wide);
+			ort_api->ReleaseSessionOptions(options);
+			zval_ptr_dtor(&providers);
+			onnx_throw("failed to encode the model path");
+			return 0;
+		}
+		status = ort_api->CreateSession(ort_env, wide, options, &session->session);
+		efree(wide);
+#else
 		status = ort_api->CreateSession(ort_env, path, options, &session->session);
+#endif
 	} else {
 		status = ort_api->CreateSessionFromArray(ort_env, bytes, length, options, &session->session);
 	}
